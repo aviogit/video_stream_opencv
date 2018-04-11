@@ -428,6 +428,7 @@ int main(int argc, char** argv)
     cam_info_msg = cam_info_manager.getCameraInfo();
     
     ROS_INFO_STREAM("Opened the stream, starting to publish.");
+    bool first_run = true;
     boost::thread cap_thread(do_capture, nh);
 
     ros::Rate r(fps);
@@ -452,6 +453,30 @@ int main(int argc, char** argv)
                     cam_info_msg = get_default_camera_info_from_image(msg);
                     cam_info_manager.setCameraInfo(cam_info_msg);
                 }
+		if (first_run) {
+                   first_run = false;
+                   uchar depth = frame.type() & CV_MAT_DEPTH_MASK;
+                   uchar chans = 1 + (frame.type() >> CV_CN_SHIFT);
+			std::cout << uint32_t(frame.type()) << std::endl;
+			std::cout << uint32_t(depth) << std::endl;
+			std::cout << uint32_t(chans) << std::endl;
+			std::cout << uint32_t(sizeof(frame.data)) << std::endl;
+			std::cout << uint32_t(frame.data) << std::endl;
+			std::cout << uint32_t(frame.datastart) << std::endl;
+			std::cout << uint32_t(frame.dataend) << std::endl;
+			std::cout << uint32_t(frame.datalimit) << std::endl;
+
+                   uint64_t memusage = 1.0 * max_queue_size * (uint32_t(frame.dataend) - uint32_t(frame.datastart)) / 1048576;
+
+                   if (memusage > 512) // MB of RAM
+                   {
+                      ROS_WARN_STREAM("WARNING. Queue size: " << max_queue_size << " * allocated image size: "
+			<< uint32_t(frame.dataend) - uint32_t(frame.datastart)
+			<< " may occupy up to: " << memusage << " MB of RAM");
+                      ROS_WARN_STREAM("especially on slow CPUs like on Raspberry Pi where exact timings cannot be met.");
+                      ROS_WARN_STREAM("Reduce the queue size if memory consumption becomes too high.");
+                   }
+		}
                 // The timestamps are in sync thanks to this publisher
                 pub.publish(*msg, cam_info_msg, ros::Time::now());
             }
