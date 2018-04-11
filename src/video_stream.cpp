@@ -45,6 +45,207 @@
 #include <boost/thread/thread.hpp>
 #include <boost/thread/sync_queue.hpp>
 
+#include <mutex>
+
+
+
+
+
+
+
+
+
+
+
+// --------------------------------------------------------------------
+// Awesome code by BloodAxe (https://github.com/BloodAxe) - found here:
+// --------------------------------------------------------------------
+// https://computer-vision-talks.com/hacking-opencv-for-fun-and-profit/
+// --------------------------------------------------------------------
+
+// modules\core\include\opencv2\core.hpp
+struct CV_EXPORTS MemorySnapshot
+{
+    //! Total amount of allocated memory.
+    size_t allocatedMemory;
+
+    //! Maximum amount of allocated memory for the whole time.
+    size_t peakMemoryUsage;
+
+    //! Maximum amount of allocated memory since last snapshot.
+    size_t peakMemoryUsageSinceLastSnapshot;
+    
+    //! Number of memory allocations count for the whole program running time.
+    size_t allocationsCount;
+
+    //! Number of memory deallocations for the whole program running time.
+    size_t deallocationsCount;
+    
+    //! Number of allocated objects that are still live (e.g not deallocated).
+    size_t liveObjects;
+};
+
+CV_EXPORTS MemorySnapshot memorySnapshot();
+
+// modules\core\alloc.cpp
+class MemoryManager
+{
+public:
+    //! Key - pointer to allocated memory, Value - it's size
+    typedef std::map<void*, size_t>     AllocationTable;
+    typedef std::lock_guard<std::mutex> LockType;
+
+    void recordAlloc(void* ptr, size_t size)
+    {
+        LockType guard(mAllocMutex);
+        mAllocatedMemory.insert(std::make_pair(ptr, size));
+
+        mCurrentMemoryUsage += size;
+        mPeakMemoryUsage = std::max(mPeakMemoryUsage, mCurrentMemoryUsage);
+        mPeakMemoryUsageSinceLastSnapshot = std::max(mPeakMemoryUsageSinceLastSnapshot, mCurrentMemoryUsage);
+        mAllocationsCount++;
+    }
+
+    void recordFree(void* ptr)
+    {
+        LockType guard(mAllocMutex);
+
+        auto block = mAllocatedMemory.find(ptr);
+        CV_Assert(block != mAllocatedMemory.end());
+    
+        mCurrentMemoryUsage -= block->second;
+        mDeallocationsCount++;
+        mAllocatedMemory.erase(block);
+    }
+
+   
+
+    static MemoryManager& Instance()
+    {
+        std::call_once(mInitFlag, []() {
+            if (mInstance == nullptr)
+            {
+                mInstance = new MemoryManager();
+            }
+        });
+
+        return *mInstance;
+    }
+
+    MemorySnapshot makeSnapshot()
+    {
+        LockType guard(mAllocMutex);
+        
+        MemorySnapshot snapshot;
+        snapshot.peakMemoryUsage = mPeakMemoryUsage;
+        snapshot.peakMemoryUsageSinceLastSnapshot = mPeakMemoryUsageSinceLastSnapshot;
+        snapshot.allocatedMemory = mCurrentMemoryUsage;
+        snapshot.allocationsCount = mAllocationsCount;
+        snapshot.deallocationsCount = mDeallocationsCount;
+        snapshot.liveObjects = mAllocationsCount - mDeallocationsCount;
+        
+        mPeakMemoryUsageSinceLastSnapshot = 0;
+
+        return std::move(snapshot);
+    }
+private:
+
+    MemoryManager()
+        : mCurrentMemoryUsage(0)
+        , mPeakMemoryUsage(0)
+        , mPeakMemoryUsageSinceLastSnapshot(0)
+        , mAllocationsCount(0)
+        , mDeallocationsCount(0)
+    {
+    }
+
+private:
+    std::mutex      mAllocMutex;
+    AllocationTable mAllocatedMemory;
+
+    size_t          mCurrentMemoryUsage;
+    size_t          mPeakMemoryUsage;
+    size_t          mPeakMemoryUsageSinceLastSnapshot;
+
+    size_t          mAllocationsCount;
+    size_t          mDeallocationsCount;
+
+    static std::once_flag  mInitFlag;
+    static MemoryManager * mInstance;
+};
+
+std::once_flag  MemoryManager::mInitFlag;
+MemoryManager * MemoryManager::mInstance = nullptr;
+
+
+#define CV_MALLOC_ALIGN 64
+
+template<typename T> inline T* alignPtr(T* ptr, size_t n=sizeof(T))
+{
+    return (T*)(((size_t)ptr + n-1) & -n);
+}
+
+
+static void* OutOfMemoryError(size_t size)
+{
+    CV_Error_(CV_StsNoMem, ("Failed to allocate %llu bytes", (unsigned long long)size));
+    return 0;
+}
+
+namespace cv {
+		// modules\core\alloc.cpp
+		void* fastMalloc(size_t size)
+		{
+		    uchar* udata = (uchar*)malloc(size + sizeof(void*) + CV_MALLOC_ALIGN);
+		
+		    if(!udata)
+		        return OutOfMemoryError(size);
+		
+		    MemoryManager::Instance().recordAlloc(udata, size);
+		    uchar** adata = alignPtr((uchar**)udata + 1, CV_MALLOC_ALIGN);
+		    adata[-1] = udata;
+		    return adata;
+		}
+		
+		void fastFree(void* ptr)
+		{
+		    if(ptr)
+		    {
+		        uchar* udata = ((uchar**)ptr)[-1];
+		        CV_DbgAssert(udata < (uchar*)ptr &&
+		               ((uchar*)ptr - udata) <= (ptrdiff_t)(sizeof(void*)+CV_MALLOC_ALIGN));
+		
+		        MemoryManager::Instance().recordFree(udata);
+		        free(udata);
+		    }
+		}
+}
+
+MemorySnapshot memorySnapshot()
+{
+    return std::move(MemoryManager::Instance().makeSnapshot());
+}
+
+#define MEASURE_MEMORY(x) { size_t memOnStart = memorySnapshot().allocatedMemory;			\
+                            x;										\
+                            size_t memOnEnd   = memorySnapshot().allocatedMemory;			\
+                            std::cout << #x << "\t" << memOnStart << "/" << memOnEnd << std::endl; }
+
+
+// --------------------------------------------------------------------
+// End of awesome code by BloodAxe. Ok I just modified it a bit just to
+// avoid to recompile the whole OpenCV, but it seems to work ok anyway.
+// --------------------------------------------------------------------
+// https://computer-vision-talks.com/hacking-opencv-for-fun-and-profit/
+// --------------------------------------------------------------------
+
+
+
+
+
+
+
+
 boost::sync_queue<cv::Mat> framesQueue;
 cv::VideoCapture cap;
 std::string camera_name;
@@ -97,12 +298,12 @@ void do_capture(ros::NodeHandle &nh) {
         if(!frame.empty()) {
             // accumulate only until max_queue_size
             if (framesQueue.size() < max_queue_size) {
-                framesQueue.push(frame.clone());
+                MEASURE_MEMORY(framesQueue.push(frame.clone()));
             }
             // once reached, drop the oldest frame
             else {
-                framesQueue.pull(_drop_frame);
-                framesQueue.push(frame.clone());
+                MEASURE_MEMORY(framesQueue.pull(_drop_frame));
+                MEASURE_MEMORY(framesQueue.push(frame.clone()));
             }
         }
     }

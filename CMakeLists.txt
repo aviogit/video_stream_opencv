@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(video_stream_opencv)
 
+#SET(USER_COMPILE_FLAGS "-g3 -gdwarf-2 -O0 -std=c++11")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g3 -gdwarf-2 -O0 -std=c++11")
+
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
