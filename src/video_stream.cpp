@@ -302,8 +302,11 @@ void do_capture(ros::NodeHandle &nh) {
             }
             // once reached, drop the oldest frame
             else {
+		std::cout << "Queue before framesQueue.pull(_drop_frame): " << framesQueue.size() << std::endl;
                 MEASURE_MEMORY(framesQueue.pull(_drop_frame));
+		std::cout << "Queue after framesQueue.pull(_drop_frame): " << framesQueue.size() << std::endl;
                 MEASURE_MEMORY(framesQueue.push(frame.clone()));
+		std::cout << "Queue after framesQueue.push(frame.clone()): " << framesQueue.size() << std::endl;
             }
         }
     }
@@ -430,7 +433,11 @@ int main(int argc, char** argv)
     ros::Rate r(fps);
     while (nh.ok()) {
 	if (!framesQueue.empty())
-		framesQueue.pull(frame);
+	{
+		std::cout << "Queue before framesQueue.pull(frame): " << framesQueue.size() << std::endl;
+                MEASURE_MEMORY(framesQueue.pull(frame));
+		std::cout << "Queue after framesQueue.pull(frame): " << framesQueue.size() << std::endl;
+	}
 
         if (pub.getNumSubscribers() > 0){
             // Check if grabbed frame is actually filled with some content
